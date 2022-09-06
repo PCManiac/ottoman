@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/caarlos0/env"
@@ -104,15 +105,14 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 			bool:
 			response[v] = message
 		default:
-			response[v] = message
-			//response[v] = []byte(message.([]byte))
-			/*rt := reflect.TypeOf(message)
+			rt := reflect.TypeOf(message)
 			switch rt.Kind() {
 			case reflect.Slice, reflect.Array:
 				response[v] = []byte(message.([]byte))
 			default:
-				response[v] = nil
-			}*/
+				response[v] = message
+				//response[v] = nil
+			}
 
 		}
 	}
