@@ -104,7 +104,8 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 			bool:
 			response[v] = message
 		default:
-			response[v] = []byte(message.([]byte))
+			response[v] = message
+			//response[v] = []byte(message.([]byte))
 			/*rt := reflect.TypeOf(message)
 			switch rt.Kind() {
 			case reflect.Slice, reflect.Array:
