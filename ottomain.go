@@ -69,6 +69,19 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 		}
 	}()
 
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
+			switch x := r.(type) {
+			case error:
+				err = x
+			default:
+				err = errors.New("otto run error")
+			}
+			response = nil
+		}
+	}()
+
 	_, err = vm.Run(script)
 
 	if err != nil {
