@@ -71,7 +71,6 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println("Recovered in f", r)
 			switch x := r.(type) {
 			case error:
 				err = x
