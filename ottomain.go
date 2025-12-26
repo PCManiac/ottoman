@@ -62,14 +62,27 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 	}
 
 	vm.Interrupt = make(chan func(), 1)
+	timeoutDone := make(chan struct{})
+
 	go func() {
-		time.Sleep(time.Duration(cfg.Timeout) * time.Second)
-		vm.Interrupt <- func() {
-			panic(errors.New("some code took to long! Stopping after timeout"))
+		select {
+		case <-time.After(time.Duration(cfg.Timeout) * time.Second):
+			select {
+			case vm.Interrupt <- func() {
+				panic(errors.New("some code took to long! Stopping after timeout"))
+			}:
+			case <-timeoutDone:
+				// Script completed before timeout, exit gracefully
+				return
+			}
+		case <-timeoutDone:
+			// Script completed before timeout, exit gracefully
+			return
 		}
 	}()
 
 	defer func() {
+		close(timeoutDone) // Signal timeout goroutine to exit
 		if r := recover(); r != nil {
 			switch x := r.(type) {
 			case error:
