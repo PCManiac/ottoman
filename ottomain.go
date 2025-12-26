@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/caarlos0/env"
@@ -12,8 +13,16 @@ import (
 )
 
 type otto_config struct {
-	Timeout int `env:"JS_TIMEOUT" envDefault:"2"`
+	Timeout       int `env:"JS_TIMEOUT" envDefault:"2"`
+	MaxConcurrent int `env:"JS_MAX_CONCURRENT" envDefault:"50"`
 }
+
+var (
+	once          sync.Once
+	semaphore     chan struct{}
+	configChecked bool
+	configMutex   sync.Mutex
+)
 
 func jsBtoa(b string) string {
 	return base64.StdEncoding.EncodeToString([]byte(b))
@@ -41,7 +50,34 @@ func jsRegisterFunctions(vm *otto.Otto) (err error) {
 	return
 }
 
+func initSemaphore() {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	if !configChecked {
+		var cfg otto_config
+		if err := env.Parse(&cfg); err != nil {
+			// Use default if env parse fails
+			cfg.MaxConcurrent = 50
+		}
+		semaphore = make(chan struct{}, cfg.MaxConcurrent)
+		configChecked = true
+	}
+}
+
 func ProcessRequest(script string, params map[string]interface{}) (response map[string]interface{}, err error) {
+	// Initialize semaphore once
+	once.Do(initSemaphore)
+
+	// Acquire semaphore to limit concurrent executions
+	select {
+	case semaphore <- struct{}{}:
+		defer func() { <-semaphore }() // Release semaphore when done
+	case <-time.After(30 * time.Second):
+		// Timeout if too many concurrent requests
+		return nil, fmt.Errorf("too many concurrent JavaScript executions, please try again later")
+	}
+
 	var cfg otto_config
 	if err := env.Parse(&cfg); err != nil {
 		return nil, fmt.Errorf("env vars parse error: %w", err)
@@ -83,6 +119,8 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 
 	defer func() {
 		close(timeoutDone) // Signal timeout goroutine to exit
+		// Clean up vm to help with garbage collection
+		vm = nil
 		if r := recover(); r != nil {
 			switch x := r.(type) {
 			case error:
