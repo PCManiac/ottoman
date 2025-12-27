@@ -20,6 +20,7 @@ type otto_config struct {
 var (
 	once          sync.Once
 	semaphore     chan struct{}
+	globalConfig  otto_config
 	configChecked bool
 	configMutex   sync.Mutex
 )
@@ -57,16 +58,18 @@ func initSemaphore() {
 	if !configChecked {
 		var cfg otto_config
 		if err := env.Parse(&cfg); err != nil {
-			// Use default if env parse fails
+			// Use defaults if env parse fails
 			cfg.MaxConcurrent = 50
+			cfg.Timeout = 2
 		}
+		globalConfig = cfg
 		semaphore = make(chan struct{}, cfg.MaxConcurrent)
 		configChecked = true
 	}
 }
 
 func ProcessRequest(script string, params map[string]interface{}) (response map[string]interface{}, err error) {
-	// Initialize semaphore once
+	// Initialize semaphore and config once
 	once.Do(initSemaphore)
 
 	// Acquire semaphore to limit concurrent executions
@@ -78,10 +81,8 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 		return nil, fmt.Errorf("too many concurrent JavaScript executions, please try again later")
 	}
 
-	var cfg otto_config
-	if err := env.Parse(&cfg); err != nil {
-		return nil, fmt.Errorf("env vars parse error: %w", err)
-	}
+	// Use cached config instead of parsing every time
+	cfg := globalConfig
 
 	vm := otto.New()
 
@@ -99,28 +100,40 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 
 	vm.Interrupt = make(chan func(), 1)
 	timeoutDone := make(chan struct{})
+	timeoutTimer := time.NewTimer(time.Duration(cfg.Timeout) * time.Second)
 
+	// Start timeout goroutine
 	go func() {
 		select {
-		case <-time.After(time.Duration(cfg.Timeout) * time.Second):
+		case <-timeoutTimer.C:
+			// Timer expired, try to interrupt
 			select {
 			case vm.Interrupt <- func() {
 				panic(errors.New("some code took to long! Stopping after timeout"))
 			}:
+				// Interrupt sent successfully
 			case <-timeoutDone:
-				// Script completed before timeout, exit gracefully
+				// Script completed before timeout, timer already stopped
 				return
 			}
 		case <-timeoutDone:
-			// Script completed before timeout, exit gracefully
+			// Script completed before timeout, stop timer
+			if !timeoutTimer.Stop() {
+				<-timeoutTimer.C
+			}
 			return
 		}
 	}()
 
 	defer func() {
-		close(timeoutDone) // Signal timeout goroutine to exit
-		// Clean up vm to help with garbage collection
-		vm = nil
+		// Signal timeout goroutine to exit and stop timer
+		close(timeoutDone)
+		if !timeoutTimer.Stop() {
+			select {
+			case <-timeoutTimer.C:
+			default:
+			}
+		}
 		if r := recover(); r != nil {
 			switch x := r.(type) {
 			case error:
