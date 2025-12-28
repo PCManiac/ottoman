@@ -111,29 +111,29 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 			case vm.Interrupt <- func() {
 				panic(errors.New("some code took to long! Stopping after timeout"))
 			}:
-				// Interrupt sent successfully
+				// Interrupt sent
 			case <-timeoutDone:
-				// Script completed before timeout, timer already stopped
-				return
+				// Script already completed
 			}
 		case <-timeoutDone:
-			// Script completed before timeout, stop timer
-			if !timeoutTimer.Stop() {
-				<-timeoutTimer.C
-			}
-			return
-		}
-	}()
-
-	defer func() {
-		// Signal timeout goroutine to exit and stop timer
-		close(timeoutDone)
-		if !timeoutTimer.Stop() {
+			// Script completed before timeout, ensure timer is stopped
+			timeoutTimer.Stop()
+			// Drain timer channel if needed (non-blocking)
 			select {
 			case <-timeoutTimer.C:
 			default:
 			}
 		}
+	}()
+
+	defer func() {
+		// Signal timeout goroutine to exit by closing channel
+		close(timeoutDone)
+
+		// Stop timer - this is safe even if it already fired
+		// We don't need to drain the channel here as goroutine handles it
+		timeoutTimer.Stop()
+
 		if r := recover(); r != nil {
 			switch x := r.(type) {
 			case error:
