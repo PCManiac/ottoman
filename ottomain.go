@@ -73,14 +73,6 @@ func ProcessRequest(script string, params map[string]interface{}) (response map[
 	// Initialize semaphore and config once
 	once.Do(initSemaphore)
 
-	// Validate input
-	if script == "" {
-		return nil, fmt.Errorf("script cannot be empty")
-	}
-	if params == nil {
-		return nil, fmt.Errorf("params cannot be nil")
-	}
-
 	// Acquire semaphore to limit concurrent executions
 	select {
 	case semaphore <- struct{}{}:
